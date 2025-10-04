@@ -15,7 +15,7 @@ SETUP INIZIALE:
 """
 
 import numpy as np
-from sklearn.datasets import make_moons, make_classification
+from sklearn.datasets import make_moons, make_classification, make_circles
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
@@ -36,6 +36,7 @@ from qiskit_ibm_runtime import QiskitRuntimeService, Estimator, Session
 from qiskit_algorithms.optimizers import COBYLA, SPSA
 
 
+RANDOM_STATE = 42
 # ============================================================================
 # STEP 1: CONFIGURAZIONE IBM QUANTUM
 # ============================================================================
@@ -86,12 +87,14 @@ def setup_ibm_quantum(api_token=None, use_real_hardware=False):
 # STEP 2: DATASET PER CLASSIFICAZIONE
 # ============================================================================
 
-def prepare_dataset(n_samples=100, dataset_type='moons'):
+def prepare_dataset(n_samples=100000, dataset_type='moons'):
     """
     Prepara dataset per classificazione binaria.
     """
     if dataset_type == 'moons':
-        X, y = make_moons(n_samples=n_samples, noise=0.1, random_state=42)
+        X, y = make_moons(n_samples=n_samples, noise=0.1, random_state=RANDOM_STATE)
+    elif dataset_type == 'circles':
+        X, y = make_circles(n_samples=n_samples, noise=0.1, factor=0.5, random_state=RANDOM_STATE)
     else:
         X, y = make_classification(
             n_samples=n_samples, 
@@ -99,7 +102,7 @@ def prepare_dataset(n_samples=100, dataset_type='moons'):
             n_redundant=0,
             n_informative=2,
             n_clusters_per_class=1,
-            random_state=42
+            random_state=RANDOM_STATE
         )
     
     # Normalizza in [0, π] per quantum encoding
@@ -108,7 +111,7 @@ def prepare_dataset(n_samples=100, dataset_type='moons'):
     
     # Split train/test
     X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.3, random_state=42
+        X_scaled, y, test_size=0.3, random_state=RANDOM_STATE
     )
     
     # Converti labels in {-1, +1} per QNN
@@ -348,8 +351,8 @@ def main():
     
     # Prepara dataset
     X_train, X_test, y_train, y_test, X_full, y_full = prepare_dataset(
-        n_samples=80,  # Riduci per hardware reale (più veloce)
-        dataset_type='moons'
+        n_samples=100000,  # Riduci per hardware reale (più veloce)
+        dataset_type='circles'  # 'moons'
     )
     
     # Crea QNN
@@ -391,30 +394,118 @@ if __name__ == "__main__":
 # BONUS: CONFRONTO CON NEURAL NETWORK CLASSICA
 # ============================================================================
 
+def train_and_plot_mlp(X_train, X_test, y_train, y_test, X_full, y_full):
+    """
+    Addestra un MLPClassifier e visualizza i risultati (Dataset, Decision Boundary, Loss).
+    """
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.metrics import accuracy_score
+    
+    print("\n" + "="*70)
+    print("INIZIO CONFRONTO: Classical Multi-Layer Perceptron (MLP)")
+    print("="*70)
+    
+    # 1. Preparazione del modello
+    # Usiamo un modello semplice con 2 hidden layers da 10 neuroni ciascuno.
+    # Usiamo 'log_loss' e 'adam' che sono standard per le NN classiche.
+    # Il callback in MLPClassifier salva la loss in 'loss_curve_'.
+    mlp = MLPClassifier(
+        hidden_layer_sizes=(10, 10), 
+        max_iter=1000, 
+        random_state=RANDOM_STATE,
+        solver='adam',
+        activation='relu',
+        tol=1e-6,
+        verbose=False # Mantieni a False per non stampare ogni iterazione
+    )
+    
+    print(f"   Inizio training MLP (max_iter={mlp.max_iter})...")
+    
+    # 2. Training
+    mlp.fit(X_train, y_train)
+    
+    print(f"✓ Training MLP completato in {mlp.n_iter_} iterazioni.")
+    
+    # 3. Evaluation e Metriche
+    # L'MLP di sklearn usa labels 0/1, ma il tuo dataset è -1/+1. 
+    # Lo scaler MinMaxScaler in 'prepare_dataset' rende i dati in [0, pi].
+    # Normalizziamo nuovamente X per l'MLP (che preferisce range [-1, 1] o [0, 1])
+    # PERÒ: Per coerenza con il dataset X_full (che è scalato in [0, pi]), usiamo questo.
+    # Se volessi la performance ottimale dell'MLP, dovrei usare i dati non scalati o scalati in [0, 1].
+    
+    y_pred_test = mlp.predict(X_test)
+    y_pred_train = mlp.predict(X_train)
+    
+    # La funzione score di MLPClassifier gestisce -1/+1 vs -1/+1 correttamente in questo contesto
+    train_score = mlp.score(X_train, y_train)
+    test_score = mlp.score(X_test, y_test)
+    
+    print(f"\n📈 Performance della MLP:")
+    print(f"   Training Accuracy: {train_score:.2%}")
+    print(f"   Test Accuracy: {test_score:.2%}")
+    
+    # 4. Visualizzazione (simile a evaluate_qnn)
+    
+    plt.figure(figsize=(15, 5))
+    
+    # Plot 1: Dataset (uguale)
+    plt.subplot(1, 3, 1)
+    plt.scatter(X_full[:, 0], X_full[:, 1], c=y_full, cmap='coolwarm', 
+                edgecolors='k', s=50)
+    plt.title('Dataset Originale (Scaled)')
+    plt.xlabel('Feature 1')
+    plt.ylabel('Feature 2')
+    plt.colorbar(label='Class')
+    
+    # Plot 2: Decision Boundary
+    plt.subplot(1, 3, 2)
+    h = 0.02
+    x_min, x_max = X_full[:, 0].min() - 0.1, X_full[:, 0].max() + 0.1
+    y_min, y_max = X_full[:, 1].min() - 0.1, X_full[:, 1].max() + 0.1
+    xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
+                         np.arange(y_min, y_max, h))
+    
+    # L'MLP predice le classi -1 o +1 direttamente
+    Z = mlp.predict(np.c_[xx.ravel(), yy.ravel()]) 
+    Z = Z.reshape(xx.shape)
+    
+    plt.contourf(xx, yy, Z, alpha=0.3, cmap='coolwarm')
+    plt.scatter(X_full[:, 0], X_full[:, 1], c=y_full, cmap='coolwarm',
+                edgecolors='k', s=50)
+    plt.title(f'MLP Decision Boundary\nAccuracy: {test_score:.2%}')
+    plt.xlabel('Feature 1')
+    plt.ylabel('Feature 2')
+    
+    # Plot 3: Training History (Loss Curve)
+    plt.subplot(1, 3, 3)
+    # MLPClassifier salva la loss in loss_curve_
+    plt.plot(mlp.loss_curve_)
+    plt.title('MLP Training Loss')
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss (Log Loss)')
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig('mlp_results.png', dpi=150, bbox_inches='tight')
+    print("✓ Grafico salvato come 'mlp_results.png'")
+    plt.show()
+    
+    return mlp, test_score
+
+# Aggiornamento della funzione compare_with_classical (presente nel tuo codice originale)
 def compare_with_classical():
     """
     Confronta QNN con MLP classico per vedere le differenze.
     """
-    from sklearn.neural_network import MLPClassifier
+    
+    X_train, X_test, y_train, y_test, X_full, y_full = prepare_dataset(n_samples=80, dataset_type='moons')
+    
+    # Classical NN Training and Plotting
+    mlp_classifier, mlp_score = train_and_plot_mlp(
+        X_train, X_test, y_train, y_test, X_full, y_full
+    )
     
     print("\n" + "="*70)
-    print("CONFRONTO: QNN vs Classical NN")
+    print("CONFRONTO COMPLETO")
     print("="*70)
-    
-    X_train, X_test, y_train, y_test, _, _ = prepare_dataset(n_samples=80)
-    
-    # Classical NN
-    mlp = MLPClassifier(hidden_layer_sizes=(10, 10), max_iter=1000, random_state=42)
-    mlp.fit(X_train, y_train)
-    mlp_score = mlp.score(X_test, y_test)
-    
-    print(f"\n📊 Risultati:")
-    print(f"   Classical NN Accuracy: {mlp_score:.2%}")
-    print(f"   Quantum NN Accuracy: (esegui main() prima)")
-    print(f"\n💡 Note:")
-    print("   - QNN può avere vantaggio su dati ad alta dimensione")
-    print("   - Hardware NISQ attuale limita le performance")
-    print("   - QNN è più interessante per il potenziale futuro")
-
-# Decommentare per eseguire il confronto
 compare_with_classical()

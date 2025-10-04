@@ -20,7 +20,7 @@ Il codice segue una pipeline logica suddivisa in 5 passaggi principali:
 ### STEP 2: Preparazione del Dataset
 - **Obiettivo:** Generare un dataset sintetico per la classificazione binaria (es. *moons dataset*) e prepararlo per il QNN.
 - **Processamento:**
-    1. Generazione di 80 campioni totali.
+    1. Generazione di 80 campioni totali (usare `n_samples=80` e `RANDOM_STATE = 42`).
     2. **Normalizzazione:** I dati vengono scalati nell'intervallo **$[0, \pi]$** (`MinMaxScaler`), un requisito comune per molte *Feature Map* quantistiche che codificano i dati tramite rotazioni.
     3. **Split:** Divisione in set di training (56 campioni) e test (24 campioni).
     4. **Etichette:** Le etichette di classe vengono convertite da $\{0, 1\}$ a **$\{-1, +1\}$** (standard per i QNN basati su *Estimator*).
